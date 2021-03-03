@@ -1,0 +1,3 @@
+# ninja log v5
+1	10559	1614150601243782795	/nfs/Desktop/MT2/fairseq-ori/build/temp.linux-x86_64-3.7/fairseq/clib/libnat/edit_dist.o	858f776002233535
+1	12751	1614150614232350401	/nfs/Desktop/MT2/fairseq-ori/build/temp.linux-x86_64-3.7/fairseq/clib/libnat_cuda/binding.o	fd66444c09ff552e
