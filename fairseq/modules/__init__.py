@@ -38,6 +38,7 @@ from .transformer_layer import TransformerDecoderLayer, TransformerEncoderLayer
 from .rectransformer_layer import RecTransformerDecoderLayer, RecTransformerEncoderLayer
 from .realformer_layer import RealformerDecoderLayer, RealformerEncoderLayer
 from .grutransformer_layer import GruTransformerDecoderLayer, GruTransformerEncoderLayer
+from .featlstm_layer import FeatLstmEncoderLayer
 from .vggblock import VGGBlock
 from .slstm import SLSTMFast
 from .slstmfast import SLSTMFast4

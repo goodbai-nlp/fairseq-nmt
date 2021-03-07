@@ -1,12 +1,13 @@
 T=5.0
 
-MODEL_PATH=checkpoints/models/SLSTM-TLSTM-6layers-layerwiseglobal-nonlinear-fp16
-MODEL_PATH=checkpoints/models/SLSTM-TLSTM-6layers-layerwiseglobal-test-fp16
-MODEL_PATH=checkpoints/models/SLSTM-TLSTM-6layers-mergelayer1head-test-fp16
+MODEL_PATH=/home/amax/Data/flstm/tf_baseline
 
 dev=1
-BASE=$(dirname $(pwd))
-DATA_BASE=$(dirname $(dirname $(pwd)))/data
+# BASE=$(dirname $(pwd))
+# echo $BASE
+# echo $(pwd)
+# DATA_BASE=$(dirname $(dirname $(pwd)))/data
+BASE=/home/amax/Codes/flstm-nmt
 RUN_PATH=$BASE/fairseq_cli
 export CUDA_VISIBLE_DEVICES=$dev
 export PYTHONPATH=$BASE
@@ -27,7 +28,7 @@ then
 echo "Start training..."
 mkdir -p $MODEL_PATH
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -u $RUN_PATH/train.py  \
+CUDA_VISIBLE_DEVICES=0 python -u $RUN_PATH/train.py  \
     data-bin/iwslt14_deen_s8000t6000 \
     --arch slstm_tlstm --share-decoder-input-output-embed \
     --optimizer adam --adam-betas '(0.9, 0.98)' --clip-norm 0.0 \
@@ -39,7 +40,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -u $RUN_PATH/train.py  \
     --attention-dropout 0.1 \
     --max-tokens 4096 \
     --update-freq 1 \
-    --temperature $T \
     --encoder-layers 6 \
     --decoder-layers 6 \
 	--kernel-size 1 \

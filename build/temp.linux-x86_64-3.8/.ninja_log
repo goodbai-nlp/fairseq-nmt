@@ -1,0 +1,6 @@
+# ninja log v5
+0	10699	1614846361828686255	/home/amax/Codes/flstm-nmt/build/temp.linux-x86_64-3.8/fairseq/clib/libnat/edit_dist.o	38eaebdfde9740df
+0	13150	1614846375156338178	/home/amax/Codes/flstm-nmt/build/temp.linux-x86_64-3.8/fairseq/clib/libnat_cuda/binding.o	fe6c5ab4154b7288
+0	42075	1614846404075582975	/home/amax/Codes/flstm-nmt/build/temp.linux-x86_64-3.8/fairseq/clib/libnat_cuda/edit_dist.o	2e6d1e033bfc5241
+0	13194	1614846417463233401	/home/amax/Codes/flstm-nmt/build/temp.linux-x86_64-3.8/fairseq/clib/cuda/ngram_repeat_block_cuda.o	56ed13328dc07d1d
+0	40176	1614846444446528894	/home/amax/Codes/flstm-nmt/build/temp.linux-x86_64-3.8/fairseq/clib/cuda/ngram_repeat_block_cuda_kernel.o	392b378d22c248aa
