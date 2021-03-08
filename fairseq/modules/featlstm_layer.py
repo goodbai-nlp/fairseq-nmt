@@ -69,7 +69,7 @@ class FeatLstmEncoderLayer(nn.Module):
             h, c = self.fusion_net(x)
         else:
             h, c = self.fusion_net(x, prev_state)
-        x = torch.reshape(h, (seq_len, bsz, embed_dim))
+        x = torch.reshape(x, (seq_len, bsz, embed_dim))
 
         return x, (h,c)
 

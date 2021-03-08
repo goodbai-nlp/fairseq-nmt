@@ -510,9 +510,13 @@ class FeatLstmEncoder(FairseqEncoder):
                 assert encoder_states is not None
                 encoder_states.append(x)
 
+        # use last step output as final features
+        seq_len, bsz, embed_dim = x.size()
+        x = torch.reshape(state[0], (seq_len, bsz, embed_dim))
+
         if self.layer_norm is not None:
             x = self.layer_norm(x)
-
+        
         # The Pytorch Mobile lite interpreter does not supports returning NamedTuple in
         # `forward` so we use a dictionary instead.
         # TorchScript does not support mixed values so the values are all lists.

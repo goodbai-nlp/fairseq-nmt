@@ -1,4 +1,3 @@
-T=5.0
 
 MODEL_PATH=/home/amax/Data/flstm/tf_baseline
 
@@ -30,7 +29,7 @@ mkdir -p $MODEL_PATH
 
 CUDA_VISIBLE_DEVICES=0 python -u $RUN_PATH/train.py  \
     data-bin/iwslt14_deen_s8000t6000 \
-    --arch slstm_tlstm --share-decoder-input-output-embed \
+    --arch transformer --share-decoder-input-output-embed \
     --optimizer adam --adam-betas '(0.9, 0.98)' --clip-norm 0.0 \
     --lr 5e-4 --lr-scheduler inverse_sqrt --warmup-updates 4000 \
     --dropout 0.3 --weight-decay 0.0001 \
@@ -42,12 +41,7 @@ CUDA_VISIBLE_DEVICES=0 python -u $RUN_PATH/train.py  \
     --update-freq 1 \
     --encoder-layers 6 \
     --decoder-layers 6 \
-	--kernel-size 1 \
     --no-epoch-checkpoints \
-    --use-layerwise-global \
-	--mask_dummy_for_fgate \
-	--merge_layer \
-	--ffoncell \
     --save-dir $MODEL_PATH 2>&1 | tee $MODEL_PATH/train.log
 
 elif [ "$mode" == "test" ]
