@@ -27,8 +27,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 nohup python -u $RUN_PATH/train.py data-bin/wmt14_e
 	--lr-scheduler inverse_sqrt --warmup-init-lr 1e-07 --warmup-updates 4000 \
 	--lr 0.0007 \
 	--criterion label_smoothed_cross_entropy --label-smoothing 0.1 --weight-decay 0.0 \
-	--max-tokens 4096 --max-update 250000 \
-	--update-freq 2 --no-progress-bar --log-format json --log-interval 50 \
+	--max-tokens 1024 --max-update 250000 \
+	--update-freq 1 --no-progress-bar --log-format json --log-interval 50 \
 	--save-interval-updates  10000 --keep-interval-updates 20 \
 	--save-dir $MODEL_PATH \
 	--fp16 \

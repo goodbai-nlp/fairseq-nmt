@@ -29,7 +29,7 @@ mkdir -p $MODEL_PATH
 
 CUDA_VISIBLE_DEVICES=0 python -u $RUN_PATH/train.py  \
     data-bin/iwslt14_deen_s8000t6000 \
-    --arch transformer --share-decoder-input-output-embed \
+    --arch transformer_iwslt_de_en --share-decoder-input-output-embed \
     --optimizer adam --adam-betas '(0.9, 0.98)' --clip-norm 0.0 \
     --lr 5e-4 --lr-scheduler inverse_sqrt --warmup-updates 4000 \
     --dropout 0.3 --weight-decay 0.0001 \
@@ -46,7 +46,7 @@ CUDA_VISIBLE_DEVICES=0 python -u $RUN_PATH/train.py  \
 
 elif [ "$mode" == "test" ]
 then
-PYTHONIOENCODING=utf-8 python -u $RUN_PATH/generate.py data-bin/iwslt14_deen_s8000t6000 \
+CUDA_VISIBLE_DEVICES=1 PYTHONIOENCODING=utf-8 python -u $RUN_PATH/generate.py data-bin/iwslt14_deen_s8000t6000 \
     --path $MODEL_PATH/checkpoint_best.pt \
     --batch-size 512 --beam 5 --remove-bpe --fp16 --lenpen 1.0 | tee $MODEL_PATH/test.log
 fi

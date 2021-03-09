@@ -1073,3 +1073,16 @@ def base_architecture(args):
     args.quant_noise_pq = getattr(args, "quant_noise_pq", 0)
     args.quant_noise_pq_block_size = getattr(args, "quant_noise_pq_block_size", 8)
     args.quant_noise_scalar = getattr(args, "quant_noise_scalar", 0)
+
+# parameters used in the "Attention Is All You Need" paper (Vaswani et al., 2017)
+@register_model_architecture("featlstm", "featlstm_wmt_en_de_big")
+def transformer_vaswani_wmt_en_de_big(args):
+    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 1024)
+    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 4096)
+    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 16)
+    args.encoder_normalize_before = getattr(args, "encoder_normalize_before", False)
+    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 1024)
+    args.decoder_ffn_embed_dim = getattr(args, "decoder_ffn_embed_dim", 4096)
+    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 16)
+    args.dropout = getattr(args, "dropout", 0.3)
+    base_architecture(args)
