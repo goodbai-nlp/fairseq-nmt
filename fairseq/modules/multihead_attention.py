@@ -141,6 +141,9 @@ class MultiheadAttention(nn.Module):
                 weights for each head. Implies *need_weights*. Default:
                 return the average attention weights over all heads.
         """
+        # if key_padding_mask is not None:
+        #     print(key_padding_mask.size())
+        #     xx
         if need_head_weights:
             need_weights = True
 
@@ -160,6 +163,7 @@ class MultiheadAttention(nn.Module):
             and not torch.jit.is_scripting()
             and False
         ):
+
             assert key is not None and value is not None
             return F.multi_head_attention_forward(
                 query,
@@ -207,6 +211,7 @@ class MultiheadAttention(nn.Module):
                 assert value is None
                 k = v = None
             else:
+                # print(key.size())
                 k = self.k_proj(key)
                 v = self.v_proj(key)
 
@@ -245,6 +250,9 @@ class MultiheadAttention(nn.Module):
                 .view(-1, bsz * self.num_heads, self.head_dim)
                 .transpose(0, 1)
             )
+            # print(k.size())
+            # print(bsz * self.num_heads)
+            # print("here")
         if v is not None:
             v = (
                 v.contiguous()
@@ -404,6 +412,8 @@ class MultiheadAttention(nn.Module):
                 [prev_key_padding_mask.float(), filler.float()], dim=1
             )
         elif key_padding_mask is not None:
+            # print(key_padding_mask.size())
+            # xx
             filler = torch.zeros(
                 (batch_size, src_len - key_padding_mask.size(1)),
                 device=key_padding_mask.device,

@@ -1,5 +1,5 @@
 
-MODEL_PATH=/home/amax/Data/flstm/tf_baseline
+MODEL_PATH=/home/amax/Data/flstm/iwlst/tf_baseline
 
 dev=1
 # BASE=$(dirname $(pwd))

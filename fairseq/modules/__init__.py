@@ -38,10 +38,13 @@ from .transformer_layer import TransformerDecoderLayer, TransformerEncoderLayer
 from .rectransformer_layer import RecTransformerDecoderLayer, RecTransformerEncoderLayer
 from .realformer_layer import RealformerDecoderLayer, RealformerEncoderLayer
 from .grutransformer_layer import GruTransformerDecoderLayer, GruTransformerEncoderLayer
-from .featlstm_layer import FeatLstmEncoderLayer
+from .featlstm_layer import FeatLstmEncoderLayer, MultiFeatsEncoderLayer, MultiFeatsGenEncoderLayer
 from .vggblock import VGGBlock
 from .slstm import SLSTMFast
 from .slstmfast import SLSTMFast4
+from .slstm_enc import SLSTMEncLayer
+from .slstm_enc_wo_dummy import SLSTMWoDummy
+from .slstm_feat import SLSTMFeat
 __all__ = [
     "AdaptiveInput",
     "AdaptiveSoftmax",

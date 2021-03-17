@@ -102,7 +102,7 @@ class TransformerEncoderLayer(nn.Module):
                 if k in state_dict:
                     state_dict["{}.{}.{}".format(name, new, m)] = state_dict[k]
                     del state_dict[k]
-
+    
     def forward(self, x, encoder_padding_mask: Optional[Tensor], attn_mask: Optional[Tensor] = None):
         """
         Args:
@@ -130,6 +130,9 @@ class TransformerEncoderLayer(nn.Module):
         residual = x
         if self.normalize_before:
             x = self.self_attn_layer_norm(x)
+        if encoder_padding_mask is not None:
+            print(encoder_padding_mask)
+            xx
         x, _ = self.self_attn(
             query=x,
             key=x,
@@ -371,6 +374,7 @@ class TransformerDecoderLayer(nn.Module):
                     saved_state["prev_key_padding_mask"] = prev_attn_state[2]
                 assert incremental_state is not None
                 self.encoder_attn._set_input_buffer(incremental_state, saved_state)
+            # print(encoder_out.size())
 
             x, attn = self.encoder_attn(
                 query=x,
@@ -382,6 +386,7 @@ class TransformerDecoderLayer(nn.Module):
                 need_weights=need_attn or (not self.training and self.need_attn),
                 need_head_weights=need_head_weights,
             )
+
             x = self.dropout_module(x)
             x = self.residual_connection(x, residual)
             if not self.normalize_before:

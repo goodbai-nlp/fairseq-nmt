@@ -25,6 +25,8 @@ from fairseq.modules import (
     SinusoidalPositionalEmbedding,
     TransformerDecoderLayer,
     TransformerEncoderLayer,
+    FeatLstmEncoderLayer,
+    MultiFeatsEncoderLayer
 )
 from fairseq.modules.checkpoint_activations import checkpoint_wrapper
 from fairseq.modules.quant_noise import quant_noise as apply_quant_noise_
@@ -35,8 +37,8 @@ DEFAULT_MAX_SOURCE_POSITIONS = 1024
 DEFAULT_MAX_TARGET_POSITIONS = 1024
 
 
-@register_model("transformer")
-class TransformerModel(FairseqEncoderDecoderModel):
+@register_model("multifeat")
+class FeatLstmModel(FairseqEncoderDecoderModel):
     """
     Transformer model from `"Attention Is All You Need" (Vaswani, et al, 2017)
     <https://arxiv.org/abs/1706.03762>`_.
@@ -190,6 +192,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
                             help='block size of quantization noise at training time')
         parser.add_argument('--quant-noise-scalar', type=float, metavar='D', default=0,
                             help='scalar quantization noise and scalar quantization at training time')
+
+        parser.add_argument('--no-reccurrent-enc', default=False, action='store_true')
         # fmt: on
 
     @classmethod
@@ -238,6 +242,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             )
         if getattr(args, "offload_activations", False):
             args.checkpoint_activations = True  # offloading implies checkpointing
+            
         encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
         decoder = cls.build_decoder(args, tgt_dict, decoder_embed_tokens)
         return cls(args, encoder, decoder)
@@ -256,7 +261,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
 
     @classmethod
     def build_encoder(cls, args, src_dict, embed_tokens):
-        return TransformerEncoder(args, src_dict, embed_tokens)
+        return FeatLstmEncoder(args, src_dict, embed_tokens)
 
     @classmethod
     def build_decoder(cls, args, tgt_dict, embed_tokens):
@@ -313,7 +318,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         return self.get_normalized_probs_scriptable(net_output, log_probs, sample)
 
 
-class TransformerEncoder(FairseqEncoder):
+class FeatLstmEncoder(FairseqEncoder):
     """
     Transformer encoder consisting of *args.encoder_layers* layers. Each layer
     is a :class:`TransformerEncoderLayer`.
@@ -367,14 +372,18 @@ class TransformerEncoder(FairseqEncoder):
         else:
             self.quant_noise = None
 
-        if self.encoder_layerdrop > 0.0:
-            self.layers = LayerDropModuleList(p=self.encoder_layerdrop)
+        if args.no_reccurrent_enc:
+            if self.encoder_layerdrop > 0.0:
+                self.layers = LayerDropModuleList(p=self.encoder_layerdrop)
+            else:
+                self.layers = nn.ModuleList([])
+            self.layers.extend(
+                [self.build_encoder_layer(args) for i in range(args.encoder_layers)])
         else:
-            self.layers = nn.ModuleList([])
-        self.layers.extend(
-            [self.build_encoder_layer(args) for i in range(args.encoder_layers)]
-        )
-        self.num_layers = len(self.layers)
+            self.layer = self.build_encoder_layer(args)
+            self.layers = [self.layer] * args.encoder_layers
+
+        self.num_layers = args.encoder_layers
 
         if args.encoder_normalize_before:
             self.layer_norm = LayerNorm(embed_dim)
@@ -382,7 +391,7 @@ class TransformerEncoder(FairseqEncoder):
             self.layer_norm = None
 
     def build_encoder_layer(self, args):
-        layer = TransformerEncoderLayer(args)
+        layer = MultiFeatsEncoderLayer(args)
         if getattr(args, "checkpoint_activations", False):
             offload_to_cpu = getattr(args, "offload_activations", False)
             layer = checkpoint_wrapper(layer, offload_to_cpu=offload_to_cpu)
@@ -478,7 +487,7 @@ class TransformerEncoder(FairseqEncoder):
         has_pads = (src_tokens.device.type == "xla" or encoder_padding_mask.any())
 
         x, encoder_embedding = self.forward_embedding(src_tokens, token_embeddings)
-
+        seq_len, bsz, embed_dim = x.size()
         # account for padding while computing the representation
         if encoder_padding_mask is not None:
             x = x * (1 - encoder_padding_mask.unsqueeze(-1).type_as(x))
@@ -492,17 +501,22 @@ class TransformerEncoder(FairseqEncoder):
             encoder_states.append(x)
 
         # encoder layers
+        state = None
+        # for i in range(self.num_layers):
         for layer in self.layers:
-            x = layer(
-                x, encoder_padding_mask=encoder_padding_mask if has_pads else None
+            x, state = layer(
+                x, state, encoder_padding_mask=encoder_padding_mask if has_pads else None
             )
             if return_all_hiddens:
                 assert encoder_states is not None
                 encoder_states.append(x)
 
+        # use last step output as final features
+        x = torch.reshape(state[0], (seq_len, bsz, embed_dim))
+
         if self.layer_norm is not None:
             x = self.layer_norm(x)
-
+        
         # The Pytorch Mobile lite interpreter does not supports returning NamedTuple in
         # `forward` so we use a dictionary instead.
         # TorchScript does not support mixed values so the values are all lists.
@@ -531,9 +545,6 @@ class TransformerEncoder(FairseqEncoder):
         if len(encoder_out["encoder_out"]) == 0:
             new_encoder_out = []
         else:
-            # print(encoder_out["encoder_out"][0].size())
-            # print(new_order.size())
-            # xx
             new_encoder_out = [encoder_out["encoder_out"][0].index_select(1, new_order)]
         if len(encoder_out["encoder_padding_mask"]) == 0:
             new_encoder_padding_mask = []
@@ -588,12 +599,14 @@ class TransformerEncoder(FairseqEncoder):
             state_dict[
                 "{}.embed_positions._float_tensor".format(name)
             ] = torch.FloatTensor(1)
-        for i in range(self.num_layers):
-            # update layer norms
-            self.layers[i].upgrade_state_dict_named(
-                state_dict, "{}.layers.{}".format(name, i)
-            )
-
+        # for i in range(self.num_layers):
+        #     # update layer norms
+        #     self.layers[i].upgrade_state_dict_named(
+        #         state_dict, "{}.layers.{}".format(name, i)
+        #     )
+        # self.layers[i].upgrade_state_dict_named(
+        #         state_dict, "{}.layers.{}".format(name, i)
+        #     )
         version_key = "{}.version".format(name)
         if utils.item(state_dict.get(version_key, torch.Tensor([1]))[0]) < 2:
             # earlier checkpoints did not normalize after the stack of layers
@@ -1003,18 +1016,10 @@ def Linear(in_features, out_features, bias=True):
     return m
 
 
-@register_model_architecture("transformer", "transformer_tiny")
-def tiny_architecture(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 64)
-    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 64)
-    args.encoder_layers = getattr(args, "encoder_layers", 2)
-    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 2)
-    args.decoder_layers = getattr(args, "decoder_layers", 2)
-    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 2)
-    return base_architecture(args)
 
 
-@register_model_architecture("transformer", "transformer")
+
+@register_model_architecture("multifeat", "multifeat")
 def base_architecture(args):
     args.encoder_embed_path = getattr(args, "encoder_embed_path", None)
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
@@ -1069,27 +1074,8 @@ def base_architecture(args):
     args.quant_noise_pq_block_size = getattr(args, "quant_noise_pq_block_size", 8)
     args.quant_noise_scalar = getattr(args, "quant_noise_scalar", 0)
 
-
-@register_model_architecture("transformer", "transformer_iwslt_de_en")
-def transformer_iwslt_de_en(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    # args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 1024)
-    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 4)
-    args.encoder_layers = getattr(args, "encoder_layers", 6)
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
-    # args.decoder_ffn_embed_dim = getattr(args, "decoder_ffn_embed_dim", 1024)
-    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 4)
-    args.decoder_layers = getattr(args, "decoder_layers", 6)
-    base_architecture(args)
-
-
-@register_model_architecture("transformer", "transformer_wmt_en_de")
-def transformer_wmt_en_de(args):
-    base_architecture(args)
-
-
 # parameters used in the "Attention Is All You Need" paper (Vaswani et al., 2017)
-@register_model_architecture("transformer", "transformer_vaswani_wmt_en_de_big")
+@register_model_architecture("multifeat", "multifeat_wmt_en_de_big")
 def transformer_vaswani_wmt_en_de_big(args):
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 1024)
     args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 4096)
@@ -1101,24 +1087,15 @@ def transformer_vaswani_wmt_en_de_big(args):
     args.dropout = getattr(args, "dropout", 0.3)
     base_architecture(args)
 
-
-@register_model_architecture("transformer", "transformer_vaswani_wmt_en_fr_big")
-def transformer_vaswani_wmt_en_fr_big(args):
+# parameters used in the "Attention Is All You Need" paper (Vaswani et al., 2017)
+@register_model_architecture("multifeat", "multifeat_wmt_en_de_base")
+def transformer_vaswani_wmt_en_de_big(args):
+    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
+    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 2048)
+    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 8)
+    args.encoder_normalize_before = getattr(args, "encoder_normalize_before", False)
+    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
+    args.decoder_ffn_embed_dim = getattr(args, "decoder_ffn_embed_dim", 2048)
+    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 8)
     args.dropout = getattr(args, "dropout", 0.1)
-    transformer_vaswani_wmt_en_de_big(args)
-
-
-@register_model_architecture("transformer", "transformer_wmt_en_de_big")
-def transformer_wmt_en_de_big(args):
-    args.attention_dropout = getattr(args, "attention_dropout", 0.1)
-    transformer_vaswani_wmt_en_de_big(args)
-
-
-# default parameters used in tensor2tensor implementation
-@register_model_architecture("transformer", "transformer_wmt_en_de_big_t2t")
-def transformer_wmt_en_de_big_t2t(args):
-    args.encoder_normalize_before = getattr(args, "encoder_normalize_before", True)
-    args.decoder_normalize_before = getattr(args, "decoder_normalize_before", True)
-    args.attention_dropout = getattr(args, "attention_dropout", 0.1)
-    args.activation_dropout = getattr(args, "activation_dropout", 0.1)
-    transformer_vaswani_wmt_en_de_big(args)
+    base_architecture(args)
