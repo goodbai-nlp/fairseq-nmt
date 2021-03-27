@@ -45,6 +45,8 @@ from .slstmfast import SLSTMFast4
 from .slstm_enc import SLSTMEncLayer
 from .slstm_enc_wo_dummy import SLSTMWoDummy
 from .slstm_feat import SLSTMFeat
+from .slstm_feat1 import SLSTMFeat1
+from .vslstm_feat import VanillaSLSTMFeat
 __all__ = [
     "AdaptiveInput",
     "AdaptiveSoftmax",

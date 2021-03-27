@@ -1,3 +1,5 @@
+## Add relative position; remove atttention output projection; remove pos embedding on slstm
+
 # coding:utf-8
 import math
 import torch
@@ -12,12 +14,14 @@ from fairseq.modules.quant_noise import quant_noise
 from fairseq.incremental_decoding_utils import with_incremental_state
 from typing import Dict, Optional, Tuple
 from fairseq.modules.fairseq_dropout import FairseqDropout
+from torch.nn import Parameter
 from fairseq import utils as fairseq_utils
 
-class SLSTMFeat(nn.Module):
+
+class SLSTMFeat1(nn.Module):
     def __init__(self, args):
         # current
-        super(SLSTMFeat, self).__init__()
+        super(SLSTMFeat1, self).__init__()
         self.hidden_size = args.encoder_embed_dim
         self.dropout = args.dropout
         self.kernel_size = args.kernel_size
@@ -26,11 +30,10 @@ class SLSTMFeat(nn.Module):
         # self.s_alpha = args.sigmoid_alpha
 
         self.norm_gate = nn.Linear(4 * self.hidden_size, 8 * self.hidden_size)
-        self.dummy_gate = nn.Linear(2 * self.hidden_size, 2 * self.hidden_size)
+
 
         self.emb_gate_linear = nn.Linear(self.hidden_size, 8 * self.hidden_size, bias=False)
 
-        self.dummy_fgate = nn.Linear(2 * self.hidden_size, self.hidden_size)
 
         self.emb_trans = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
         # self.h_trans = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
@@ -124,17 +127,11 @@ class SLSTMFeat(nn.Module):
             self.Wio,
         ) = torch.chunk(self.emb_gates_w, 8, dim=1)
 
-        self.dummy_gates_W = self.dummy_gate.weight.t()
-        self.dummy_gates_b = self.dummy_gate.bias
-        self.W_fd_d, self.W_od = torch.chunk(self.dummy_gates_W, 2, dim=1)  # [2*H, H]
-        self.gated_Wxd, self.gated_Whd = torch.chunk(self.W_fd_d, 2, dim=0)
-        self.gated_Wxo, self.gated_Who = torch.chunk(self.W_od, 2, dim=0)
-        self.gated_bd, self.gated_bo = torch.chunk(self.dummy_gates_b, 2, dim=0)
 
-        self.dummy_fgates_W = self.dummy_fgate.weight.t()
-        self.dummy_fgates_b = self.dummy_fgate.bias
-        self.gated_Wxf, self.gated_Whf = torch.chunk(self.dummy_fgates_W, 2, dim=0)
-        self.gated_bf = self.dummy_fgates_b
+
+
+
+
         self.We = self.emb_trans.weight.t()
 
         self.initializer = nn.init.normal_
@@ -205,18 +202,12 @@ class SLSTMFeat(nn.Module):
         # nn.init.constant_(self.bf3, 0.)
         # nn.init.constant_(self.bf4, 0.)
 
-        nn.init.normal_(self.gated_Wxd, mean=0, std=0.1)
-        nn.init.normal_(self.gated_Whd, mean=0, std=0.1)
-        nn.init.normal_(self.gated_Wxo, mean=0, std=0.1)
-        nn.init.normal_(self.gated_Who, mean=0, std=0.1)
-        nn.init.normal_(self.gated_Wxf, mean=0, std=0.1)
-        nn.init.normal_(self.gated_Whf, mean=0, std=0.1)
 
-        nn.init.normal_(self.gated_bd, mean=0, std=0.1)
+        # nn.init.normal_(self.gated_bd, mean=0, std=0.1)
 
-        nn.init.normal_(self.gated_bo, mean=0, std=0.1)
+        # nn.init.normal_(self.gated_bo, mean=0, std=0.1)
 
-        nn.init.normal_(self.gated_bf, mean=0, std=0.1)
+        # nn.init.normal_(self.gated_bf, mean=0, std=0.1)
 
         # nn.init.constant_(self.gated_bf, 0.0)
         # stdv = 1. / math.sqrt(self.gated_bf.shape[0])
@@ -550,9 +541,9 @@ class MultiheadAttention(nn.Module):
             nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
         )
         # We do not need output projection as we have gates
-        self.out_proj = quant_noise(
-            nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
+        # self.out_proj = quant_noise(
+        #     nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
+        # )
 
         if add_bias_kv:
             self.bias_k = Parameter(torch.Tensor(1, 1, embed_dim))
@@ -562,6 +553,9 @@ class MultiheadAttention(nn.Module):
 
         self.add_zero_attn = add_zero_attn
 
+        # init relative position embedding
+        self.relpos_k = RelativePosition(self.head_dim)
+        self.relpos_v = RelativePosition(self.head_dim)
         self.reset_parameters()
 
         self.onnx_trace = False
@@ -581,9 +575,9 @@ class MultiheadAttention(nn.Module):
             nn.init.xavier_uniform_(self.v_proj.weight)
             nn.init.xavier_uniform_(self.q_proj.weight)
 
-        nn.init.xavier_uniform_(self.out_proj.weight)
-        if self.out_proj.bias is not None:
-            nn.init.constant_(self.out_proj.bias, 0.0)
+        # nn.init.xavier_uniform_(self.out_proj.weight)
+        # if self.out_proj.bias is not None:
+        #     nn.init.constant_(self.out_proj.bias, 0.0)
         if self.bias_k is not None:
             nn.init.xavier_normal_(self.bias_k)
         if self.bias_v is not None:
@@ -631,41 +625,6 @@ class MultiheadAttention(nn.Module):
         assert embed_dim == self.embed_dim
         assert list(query.size()) == [tgt_len, bsz, embed_dim]
 
-        if (
-            not self.onnx_trace
-            and not is_tpu  # don't use PyTorch version on TPUs
-            and incremental_state is None
-            and not static_kv
-            # A workaround for quantization to work. Otherwise JIT compilation
-            # treats bias in linear module as method.
-            and not torch.jit.is_scripting()
-            and False
-        ):
-
-            assert key is not None and value is not None
-            return F.multi_head_attention_forward(
-                query,
-                key,
-                value,
-                self.embed_dim,
-                self.num_heads,
-                torch.empty([0]),
-                torch.cat((self.q_proj.bias, self.k_proj.bias, self.v_proj.bias)),
-                self.bias_k,
-                self.bias_v,
-                self.add_zero_attn,
-                self.dropout_module.p,
-                self.out_proj.weight,
-                self.out_proj.bias,
-                self.training or self.dropout_module.apply_during_inference,
-                key_padding_mask,
-                need_weights,
-                attn_mask,
-                use_separate_proj_weight=True,
-                q_proj_weight=self.q_proj.weight,
-                k_proj_weight=self.k_proj.weight,
-                v_proj_weight=self.v_proj.weight,
-            )
 
         if incremental_state is not None:
             saved_state = self._get_input_buffer(incremental_state)
@@ -779,6 +738,7 @@ class MultiheadAttention(nn.Module):
         assert k is not None
         src_len = k.size(1)
 
+            
         # This is part of a workaround to get around fork/join parallelism
         # not supporting Optional types.
         if key_padding_mask is not None and key_padding_mask.dim() == 0:
@@ -788,29 +748,27 @@ class MultiheadAttention(nn.Module):
             assert key_padding_mask.size(0) == bsz
             assert key_padding_mask.size(1) == src_len
 
-        if self.add_zero_attn:
-            assert v is not None
-            src_len += 1
-            k = torch.cat([k, k.new_zeros((k.size(0), 1) + k.size()[2:])], dim=1)
-            v = torch.cat([v, v.new_zeros((v.size(0), 1) + v.size()[2:])], dim=1)
-            if attn_mask is not None:
-                attn_mask = torch.cat(
-                    [attn_mask, attn_mask.new_zeros(attn_mask.size(0), 1)], dim=1
-                )
-            if key_padding_mask is not None:
-                key_padding_mask = torch.cat(
-                    [
-                        key_padding_mask,
-                        torch.zeros(key_padding_mask.size(0), 1).type_as(
-                            key_padding_mask
-                        ),
-                    ],
-                    dim=1,
-                )
+
 
         attn_weights = torch.bmm(q, k.transpose(1, 2))
-        attn_weights = self.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
-
+        ## relative position weights, 
+        # q: bsz * self.num_heads, tgt_len, self.head_dim
+        # r_k: tgt_len, src_len, self.head_dim
+        q_len = tgt_len
+        kv_len = src_len
+        # if saved_state is not None:
+        #     kv_len = saved_state.size()[2]
+        # else:
+        #     kv_len = src_len
+        r_k = self.relpos_k(q_len, kv_len)
+        # [tgt_len, bsz * self.num_heads, head_dim] x [tgt_len, self.head_dim, src_len]
+        relpos_weights = torch.bmm(q.transpose(0,1), r_k.transpose(1,2)).transpose(0,1)
+        # print(attn_weights.size())
+        # print(relpos_weights.size())
+        attn_weights += relpos_weights
+        if saved_state is not None:
+            print(tgt_len)
+            # print(src_len)
         assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]
 
         if attn_mask is not None:
@@ -844,6 +802,14 @@ class MultiheadAttention(nn.Module):
 
         assert v is not None
         attn = torch.bmm(attn_probs, v)
+        ## relative position values, 
+        # attn_probs: 
+        # r_v: tgt_len, src_len, self.head_dim
+        r_v = self.relpos_k(q_len, kv_len)
+        # [tgt_len, bsz * self.num_heads, src_len] x [tgt_len, src_len, self.head_dim]
+        relpos_attn = torch.bmm(attn_probs.transpose(0,1), r_v).transpose(0,1)
+        attn += relpos_attn
+
         assert list(attn.size()) == [bsz * self.num_heads, tgt_len, self.head_dim]
         if self.onnx_trace and attn.size(1) == 1:
             # when ONNX tracing a single decoder step (sequence length == 1)
@@ -851,7 +817,7 @@ class MultiheadAttention(nn.Module):
             attn = attn.contiguous().view(tgt_len, bsz, embed_dim)
         else:
             attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
-        attn = self.out_proj(attn)
+        # attn = self.out_proj(attn)
         attn_weights: Optional[Tensor] = None
         if need_weights:
             attn_weights = attn_weights_float.view(
@@ -940,8 +906,7 @@ class MultiheadAttention(nn.Module):
     ):
         return self.set_incremental_state(incremental_state, "attn_state", buffer)
 
-    def apply_sparse_mask(self, attn_weights, tgt_len: int, src_len: int, bsz: int):
-        return attn_weights
+
 
     def upgrade_state_dict_named(self, state_dict, name):
         prefix = name + "." if name != "" else ""
@@ -973,3 +938,25 @@ class MultiheadAttention(nn.Module):
 
         for key, value in items_to_add.items():
             state_dict[key] = value
+
+class RelativePosition(nn.Module):
+    def __init__(self, num_units, max_relative_position=16):
+        super().__init__()
+        self.num_units = num_units
+        self.max_relative_position = max_relative_position
+        self.embeddings_table = Parameter(torch.Tensor(max_relative_position * 2 + 1, num_units))
+        
+        nn.init.xavier_uniform_(self.embeddings_table)
+
+    def forward(self, length_q, length_k):
+        range_vec_q = torch.arange(length_q)
+        range_vec_k = torch.arange(length_k)
+        distance_mat = range_vec_k[None, :] - range_vec_q[:, None]
+        # print(distance_mat)
+        distance_mat_clipped = torch.clamp(distance_mat, -self.max_relative_position, self.max_relative_position)
+        final_mat = distance_mat_clipped + self.max_relative_position
+        # print(final_mat)
+        final_mat = torch.LongTensor(final_mat)
+        embeddings = self.embeddings_table[final_mat]
+
+        return embeddings

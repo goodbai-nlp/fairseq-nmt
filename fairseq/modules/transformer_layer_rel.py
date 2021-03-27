@@ -8,8 +8,8 @@ from typing import Dict, List, Optional
 import torch
 import torch.nn as nn
 from fairseq import utils
-from fairseq.modules import LayerNorm, MultiheadAttention
-# from fairseq.modules.slstm_feat1 import MultiheadAttention
+from fairseq.modules import LayerNorm
+from fairseq.modules.slstm_feat1 import MultiheadAttention
 from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq.modules.quant_noise import quant_noise
 from torch import Tensor
