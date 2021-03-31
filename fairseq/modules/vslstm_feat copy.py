@@ -13,8 +13,6 @@ from fairseq.incremental_decoding_utils import with_incremental_state
 from typing import Dict, Optional, Tuple
 from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq import utils as fairseq_utils
-from torch.nn import Parameter
-
 
 class VanillaSLSTMFeat(nn.Module):
     def __init__(self, args):
@@ -43,13 +41,13 @@ class VanillaSLSTMFeat(nn.Module):
         self.reset_parameters()
 
         # feat lstm init
-        # self.attn_feautre = TransformerEncoderLayer(args)
-        self.attn_feautre = MultiheadAttention(
-            self.hidden_size,
-            args.encoder_attention_heads,
-            dropout=args.attention_dropout,
-            self_attention=True,
-        )
+        self.attn_feautre = TransformerEncoderLayer(args)
+        # self.attn_feautre = MultiheadAttention(
+        #     self.hidden_size,
+        #     args.encoder_attention_heads,
+        #     dropout=args.attention_dropout,
+        #     self_attention=True,
+        # )
         # self.attn_cell = nn.LSTMCell(self.hidden_size, self.hidden_size)
         
 
@@ -201,23 +199,38 @@ class VanillaSLSTMFeat(nn.Module):
     def sum_together(self, ll):
         return sum(ll)
 
+    # def my_sigmoid(self, x):
+    #     return 1 / (1 + np.exp(-self.s_alpha * x))
+    # def attn_feat_extractor(self, x, key_padding_mask, prev_state):
+    #     x = x.transpose(0,1) #  -> [seq_len, bsz, H]
+    #     key_padding_mask = torch.squeeze(key_padding_mask, dim=-1)
+
+    #     x, _ = self.attn_feautre(
+    #         query=x,
+    #         key=x,
+    #         value=x,
+    #         key_padding_mask=key_padding_mask,
+    #         need_weights=False,
+    #         attn_mask=None,
+    #     )
+        
+    #     seq_len, bsz, hidden_size = x.size()
+    #     x = torch.reshape(x, (seq_len*bsz,hidden_size))
+    #     if not prev_state:
+    #         h, c = self.attn_cell(x)
+    #     else:
+    #         h, c = self.attn_cell(x, prev_state)
+        
+    #     # h = torch.reshape(h, (bsz, seq_len, hidden_size))
+    #     # c = torch.reshape(c, (bsz, seq_len, hidden_size))
+    #     return h, c
 
     def attn_feat_extractor(self, x, key_padding_mask, prev_state=None):
         x = x.transpose(0,1) #  -> [seq_len, bsz, H]
         key_padding_mask = torch.squeeze(key_padding_mask, dim=-1)
 
-        # x = self.attn_feautre(x, encoder_padding_mask=key_padding_mask)
-        x, _ = self.attn_feautre(
-            query=x,
-            key=x,
-            value=x,
-            key_padding_mask=key_padding_mask,
-            need_weights=False,
-            attn_mask=None,
-        )
-        x = x.transpose(0,1) # -> [bsz, seq_len, H]
-        bsz, seq_len, hidden_size = x.size()
-
+        x = self.attn_feautre(x, encoder_padding_mask=key_padding_mask)
+        seq_len, bsz, hidden_size = x.size()
         x = torch.reshape(x, (seq_len*bsz,hidden_size))
         return x
 
@@ -257,7 +270,7 @@ class VanillaSLSTMFeat(nn.Module):
         ##################################################################################################################################
         ## extract features 
         # [bsz, seq_len, H] -> [bsz*seq_len, H]
-        
+
         feature0 = self.attn_feat_extractor(initial_hidden_states, bool_mask, None) 
 
 
@@ -392,7 +405,7 @@ class VanillaSLSTMFeat(nn.Module):
 
 
         all_mem_hidden = torch.stack(all_hidden_buffer, dim=0)       # [num_layers, bsz, src_len, H]
-        # all_mem_hidden_inp = all_mem_hidden.transpose(1, 2).contiguous().view(num_steps * src_len, shape[0], hidden_size)       # [num_layers*src_len, bsz, H]
+        all_mem_hidden_inp = all_mem_hidden.transpose(1, 2).contiguous().view(num_steps * src_len, shape[0], hidden_size)       # [num_layers*src_len, bsz, H]
         
         # print('Time cost:', time.time() - time_s)
         # sys.exit(0)
@@ -455,9 +468,9 @@ class MultiheadAttention(nn.Module):
             nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
         )
         # We do not need output projection as we have gates
-        self.out_proj = quant_noise(
-            nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
+        # self.out_proj = quant_noise(
+        #     nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
+        # )
 
         if add_bias_kv:
             self.bias_k = Parameter(torch.Tensor(1, 1, embed_dim))
@@ -489,9 +502,9 @@ class MultiheadAttention(nn.Module):
             nn.init.xavier_uniform_(self.v_proj.weight)
             nn.init.xavier_uniform_(self.q_proj.weight)
 
-        nn.init.xavier_uniform_(self.out_proj.weight)
-        if self.out_proj.bias is not None:
-            nn.init.constant_(self.out_proj.bias, 0.0)
+        # nn.init.xavier_uniform_(self.out_proj.weight)
+        # if self.out_proj.bias is not None:
+        #     nn.init.constant_(self.out_proj.bias, 0.0)
         if self.bias_k is not None:
             nn.init.xavier_normal_(self.bias_k)
         if self.bias_v is not None:
@@ -731,7 +744,7 @@ class MultiheadAttention(nn.Module):
             attn = attn.contiguous().view(tgt_len, bsz, embed_dim)
         else:
             attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
-        attn = self.out_proj(attn)
+        # attn = self.out_proj(attn)
         attn_weights: Optional[Tensor] = None
         if need_weights:
             attn_weights = attn_weights_float.view(

@@ -11,7 +11,7 @@ RUN_PATH=$BASE/fairseq_cli
 export CUDA_VISIBLE_DEVICES=$dev
 export PYTHONPATH=$BASE
 mode=$1
-
+time=$(date +"%T")
 if [ "$mode" == "prepare" ]
 then
 
@@ -27,7 +27,7 @@ then
 echo "Start training..."
 mkdir -p $MODEL_PATH
 
-CUDA_VISIBLE_DEVICES=0 python -u $RUN_PATH/train.py  \
+CUDA_VISIBLE_DEVICES=3 python -u $RUN_PATH/train.py  \
     data-bin/iwslt14_deen_s8000t6000 \
     --arch transformer_iwslt_de_en --share-decoder-input-output-embed \
     --optimizer adam --adam-betas '(0.9, 0.98)' --clip-norm 0.0 \
@@ -42,11 +42,11 @@ CUDA_VISIBLE_DEVICES=0 python -u $RUN_PATH/train.py  \
     --encoder-layers 6 \
     --decoder-layers 6 \
     --no-epoch-checkpoints \
-    --save-dir $MODEL_PATH 2>&1 | tee $MODEL_PATH/train.log
+    --save-dir $MODEL_PATH 2>&1 | tee $MODEL_PATH/train.log.$time
 
 elif [ "$mode" == "test" ]
 then
 CUDA_VISIBLE_DEVICES=1 PYTHONIOENCODING=utf-8 python -u $RUN_PATH/generate.py data-bin/iwslt14_deen_s8000t6000 \
     --path $MODEL_PATH/checkpoint_best.pt \
-    --batch-size 512 --beam 5 --remove-bpe --fp16 --lenpen 1.0 | tee $MODEL_PATH/test.log
+    --batch-size 512 --beam 5 --remove-bpe --fp16 --lenpen 1.0 | tee $MODEL_PATH/test.log.$time
 fi

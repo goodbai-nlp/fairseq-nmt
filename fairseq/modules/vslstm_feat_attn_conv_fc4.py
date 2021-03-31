@@ -7,7 +7,7 @@ import numpy as np
 import torch.nn.functional as F
 import sys
 import time
-from fairseq.modules import LayerNorm, TransformerEncoderLayer
+from fairseq.modules import LayerNorm, TransformerEncoderLayer, LightweightConv
 from fairseq.modules.quant_noise import quant_noise
 from fairseq.incremental_decoding_utils import with_incremental_state
 from typing import Dict, Optional, Tuple
@@ -27,13 +27,12 @@ class VanillaSLSTMFeat(nn.Module):
         # self.l_std = args.std_layer
         # self.s_alpha = args.sigmoid_alpha
 
-        self.norm_gate = nn.Linear(4 * self.hidden_size, 7 * self.hidden_size)
+        self.norm_gate = nn.Linear(4 * self.hidden_size, 8 * self.hidden_size)
+        self.feat2_gate_linear = nn.Linear(self.hidden_size, 8 * self.hidden_size, bias=False)
+        self.emb_gate_linear = nn.Linear(self.hidden_size, 8 * self.hidden_size, bias=False)
+        self.peep_gate_linear = nn.Linear(self.hidden_size, 8 * self.hidden_size, bias=False)
 
-
-        self.emb_gate_linear = nn.Linear(self.hidden_size, 7 * self.hidden_size, bias=False)
-
-        self.peep_gate_linear = nn.Linear(self.hidden_size, 7 * self.hidden_size, bias=False)
-
+        
 
         self.temperature = args.temperature
         # if self.config.HP_gpu:
@@ -42,16 +41,22 @@ class VanillaSLSTMFeat(nn.Module):
         # reset slstm params
         self.reset_parameters()
 
-        # feat lstm init
-        # self.attn_feautre = TransformerEncoderLayer(args)
+        # feat0
         self.attn_feautre = MultiheadAttention(
             self.hidden_size,
             args.encoder_attention_heads,
             dropout=args.attention_dropout,
             self_attention=True,
         )
+        # feature 1
+        self.conv_feature = LightConv(args, kernel_size=args.conv_kernel_size)
+
+
         # self.attn_cell = nn.LSTMCell(self.hidden_size, self.hidden_size)
-        
+        self.fc1 = nn.Linear(self.hidden_size, self.hidden_size * 4)
+        self.fc2 = nn.Linear(self.hidden_size * 4, self.hidden_size)
+        self.act_func = nn.ReLU(inplace=True)        
+        self.ffn_LN = LayerNorm(self.hidden_size)
 
     def reset_parameters(self):
         self.norm_gates_W = self.norm_gate.weight.t()
@@ -60,18 +65,20 @@ class VanillaSLSTMFeat(nn.Module):
             self.W_fl,
             self.W_fr,
             self.W_fc,
-            self.W_fd,
+            self.W_f1,
+            self.W_f2,
             self.W_i,
             self.W_w,
             self.W_o,
         ) = torch.chunk(
-            self.norm_gates_W, 7, dim=1
+            self.norm_gates_W, 8, dim=1
         )  # [4*H, H]
         sections = [self.hidden_size, 2 * self.hidden_size, self.hidden_size]
         self.Wxf1, self.Whf1, self.Wdf1 = torch.split(self.W_fl, sections, dim=0)  # [H, H]
         self.Wxf2, self.Whf2, self.Wdf2 = torch.split(self.W_fr, sections, dim=0)
         self.Wxf3, self.Whf3, self.Wdf3 = torch.split(self.W_fc, sections, dim=0)
-        self.Wxf4, self.Whf4, self.Wdf4 = torch.split(self.W_fd, sections, dim=0)
+        self.Wxf4, self.Whf4, self.Wdf4 = torch.split(self.W_f1, sections, dim=0)
+        self.Wxf5, self.Whf5, self.Wdf5 = torch.split(self.W_f2, sections, dim=0)
         self.Wxi, self.Whi, self.Wdi = torch.split(self.W_i, sections, dim=0)
         self.Wxt, self.Wht, self.Wdt = torch.split(self.W_w, sections, dim=0)
         self.Wxo, self.Who, self.Wdo = torch.split(self.W_o, sections, dim=0)
@@ -79,31 +86,34 @@ class VanillaSLSTMFeat(nn.Module):
             self.b_fl,
             self.b_fr,
             self.b_fc,
-            self.b_fd,
+            self.b_f1,
+            self.b_f2,
             self.bi,
             self.bw,
             self.bo,
-        ) = torch.chunk(self.norm_gates_b, 7, dim=0)
+        ) = torch.chunk(self.norm_gates_b, 8, dim=0)
         self.emb_gates_w = self.emb_gate_linear.weight.t()
         (
             self.Wif1,
             self.Wif2,
             self.Wif3,
             self.Wif4,
+            self.Wif5,
             self.Wii,
             self.Wit,
             self.Wio,
-        ) = torch.chunk(self.emb_gates_w, 7, dim=1)
+        ) = torch.chunk(self.emb_gates_w, 8, dim=1)
         self.pip_gates_w = self.peep_gate_linear.weight.t()
         (
             self.Wpf1,
             self.Wpf2,
             self.Wpf3,
             self.Wpf4,
+            self.Wpf5,
             self.Wpi,
             self.Wpt,
             self.Wpo,
-        ) = torch.chunk(self.pip_gates_w, 7, dim=1)
+        ) = torch.chunk(self.pip_gates_w, 8, dim=1)
 
     
 
@@ -135,6 +145,12 @@ class VanillaSLSTMFeat(nn.Module):
         nn.init.normal_(self.Wdf4, mean=0, std=0.1)
         nn.init.normal_(self.Wpf4, mean=0, std=0.1)
 
+        nn.init.normal_(self.Wxf5, mean=0, std=0.1)
+        nn.init.normal_(self.Whf5, mean=0, std=0.1)
+        nn.init.normal_(self.Wif5, mean=0, std=0.1)
+        nn.init.normal_(self.Wdf5, mean=0, std=0.1)
+        nn.init.normal_(self.Wpf5, mean=0, std=0.1)
+
         nn.init.normal_(self.Wxi, mean=0, std=0.1)
         nn.init.normal_(self.Whi, mean=0, std=0.1)
         nn.init.normal_(self.Wii, mean=0, std=0.1)
@@ -159,8 +175,8 @@ class VanillaSLSTMFeat(nn.Module):
         nn.init.normal_(self.b_fl, mean=0, std=0.1)
         nn.init.normal_(self.b_fr, mean=0, std=0.1)
         nn.init.normal_(self.b_fc, mean=0, std=0.1)
-        nn.init.normal_(self.b_fd, mean=0, std=0.1)
-
+        nn.init.normal_(self.b_f1, mean=0, std=0.1)
+        nn.init.normal_(self.b_f2, mean=0, std=0.1)
 
 
 
@@ -205,7 +221,6 @@ class VanillaSLSTMFeat(nn.Module):
     def attn_feat_extractor(self, x, key_padding_mask, prev_state=None):
         x = x.transpose(0,1) #  -> [seq_len, bsz, H]
         key_padding_mask = torch.squeeze(key_padding_mask, dim=-1)
-
         # x = self.attn_feautre(x, encoder_padding_mask=key_padding_mask)
         x, _ = self.attn_feautre(
             query=x,
@@ -217,9 +232,17 @@ class VanillaSLSTMFeat(nn.Module):
         )
         x = x.transpose(0,1) # -> [bsz, seq_len, H]
         bsz, seq_len, hidden_size = x.size()
-
-        x = torch.reshape(x, (seq_len*bsz,hidden_size))
+        x = torch.reshape(x, (bsz*seq_len,hidden_size))
         return x
+    
+    def conv_feat_extractor(self, x, key_padding_mask):
+        x = x.transpose(0,1) #  -> [seq_len, bsz, H]
+        x = self.conv_feature(x, key_padding_mask)
+        x = x.transpose(0,1) # -> [bsz, seq_len, H]
+        bsz, seq_len, hidden_size = x.size()
+        x = torch.reshape(x, (bsz*seq_len,hidden_size))
+        return x
+
 
     def forward(self, word_inputs, mask, num_layers, seq_length=None):
         bool_mask = mask
@@ -253,14 +276,6 @@ class VanillaSLSTMFeat(nn.Module):
         initial_cell_states = filtered_word_inputs
 
 
-
-        ##################################################################################################################################
-        ## extract features 
-        # [bsz, seq_len, H] -> [bsz*seq_len, H]
-        
-        feature0 = self.attn_feat_extractor(initial_hidden_states, bool_mask, None) 
-
-
         batch_size, src_len, hidden_size = shape[0], shape[1], shape[2]
         padding_list = [
             self.create_padding_variable((batch_size, step + 1, hidden_size)).type_as(
@@ -275,6 +290,12 @@ class VanillaSLSTMFeat(nn.Module):
         all_hidden_buffer = []
 
         for i in range(num_steps):
+            ##################################################################################################################################
+            # extract feature
+            # [bsz, seq_len, H] -> [bsz*seq_len, H]
+            feature1 = self.attn_feat_extractor(initial_hidden_states, bool_mask, None)
+            feature2 = self.conv_feat_extractor(initial_hidden_states, bool_mask)
+
             ##################################################################################################################################
             # update word node states
             # get states before
@@ -331,14 +352,14 @@ class VanillaSLSTMFeat(nn.Module):
 
             # compute gate
             peep_cat = self.peep_gate_linear(initial_cell_states) # peephole connection
-
+            feat2_cat = self.feat2_gate_linear(feature2)
             cat_gate_value = (
                 self.norm_gate(
-                    torch.cat([initial_hidden_states, concat_before_after, feature0], dim=1)
+                    torch.cat([initial_hidden_states, concat_before_after, feature1], dim=1)
                 )
-                + we_cat + peep_cat
+                + we_cat + peep_cat + feat2_cat
             )
-            c_fl, c_fr, c_fc, c_feat, c_i, c_w, c_o = torch.chunk(cat_gate_value, 7, dim=1)
+            c_fl, c_fr, c_fc, c_f1, c_f2, c_i, c_w, c_o = torch.chunk(cat_gate_value, 8, dim=1)
             """
             c_fl, c_fr, c_fc: left, right and current cell gate
             c_feat: feature gate
@@ -349,24 +370,29 @@ class VanillaSLSTMFeat(nn.Module):
             g_fl = torch.sigmoid(c_fl)
             g_fr = torch.sigmoid(c_fr)
             g_fc = torch.sigmoid(c_fc)
-            g_feat = torch.sigmoid(c_feat)
+            g_f1 = torch.sigmoid(c_f1)
+            g_f2 = torch.sigmoid(c_f2)
             g_i = torch.sigmoid(c_i)
             g_w = torch.tanh(c_w)
             g_o = torch.sigmoid(c_o)
 
             gates_cat = torch.cat(
-                [g_fl.unsqueeze(1), g_fr.unsqueeze(1), g_fc.unsqueeze(1), g_feat.unsqueeze(1), g_i.unsqueeze(1)], dim=1
+                [g_fl.unsqueeze(1), g_fr.unsqueeze(1), g_fc.unsqueeze(1), g_f1.unsqueeze(1), g_f2.unsqueeze(1), g_i.unsqueeze(1)], dim=1
             )
             gates_softmax = F.softmax(gates_cat, dim=1)
-            g_fl, g_fr, g_fc, g_feat, g_i = torch.chunk(gates_softmax, 5, dim=1)
+            g_fl, g_fr, g_fc, g_f1, g_f2, g_i = torch.chunk(gates_softmax, 6, dim=1)
 
-            g_fl, g_fr, g_fc, g_feat, g_i = g_fl.squeeze(1), g_fr.squeeze(1), g_fc.squeeze(1), g_feat.squeeze(1), g_i.squeeze(1)
+            g_fl, g_fr, g_fc, g_f1, g_f2, g_i = g_fl.squeeze(1), g_fr.squeeze(1), g_fc.squeeze(1), g_f1.squeeze(1), g_f2.squeeze(1), g_i.squeeze(1)
 
-            c_t_new =  initial_cell_states_before*g_fl + initial_cell_states_after*g_fr + initial_cell_states*g_fc + feature0*g_feat + g_w*g_i
+            c_t_new =  initial_cell_states_before*g_fl + initial_cell_states_after*g_fr + initial_cell_states*g_fc + feature1*g_f1 + feature2*g_f2 + g_w*g_i
 
             h_t_new = g_o * torch.tanh(c_t_new)
 
-
+            # ffn blocks
+            h_t_new = self.ffn_LN(h_t_new)
+            res = h_t_new
+            h_t_new = self.fc2(self.act_func(self.fc1(h_t_new)))
+            h_t_new += res
 
             # update states
             initial_hidden_states = h_t_new.view(shape[0], src_len, hidden_size)
@@ -378,9 +404,7 @@ class VanillaSLSTMFeat(nn.Module):
             initial_hidden_states = initial_hidden_states * sequence_mask
             initial_cell_states = initial_cell_states * sequence_mask
 
-            ##################################################################################################################################
-            ## update feature nodes
-            feature0 = self.attn_feat_extractor(initial_hidden_states, bool_mask) 
+
             
 
 
@@ -874,3 +898,94 @@ class RelativePosition(nn.Module):
         embeddings = self.embeddings_table[final_mat]
 
         return embeddings
+
+class LightConv(nn.Module):
+    """Encoder layer block.
+
+    Args:
+        args (argparse.Namespace): parsed command-line arguments
+        kernel_size: kernel size of the convolution
+    """
+
+    def __init__(self, args, kernel_size=0):
+        super().__init__()
+        self.embed_dim = args.encoder_embed_dim
+        self.conv_dim = args.encoder_conv_dim
+        padding_l = (
+            kernel_size // 2
+            if kernel_size % 2 == 1
+            else ((kernel_size - 1) // 2, kernel_size // 2)
+        )
+
+        if args.encoder_glu:
+            self.linear1 = Linear(self.embed_dim, 2 * self.conv_dim)
+            self.act = nn.GLU()
+        else:
+            self.linear1 = Linear(self.embed_dim, self.conv_dim)
+            self.act = None
+        if args.encoder_conv_type == "lightweight":
+            self.conv = LightweightConv(
+                self.conv_dim,
+                kernel_size,
+                padding_l=padding_l,
+                weight_softmax=args.weight_softmax,
+                num_heads=args.encoder_attention_heads,
+                weight_dropout=args.weight_dropout,
+            )
+        elif args.encoder_conv_type == "dynamic":
+            self.conv = DynamicConv(
+                self.conv_dim,
+                kernel_size,
+                padding_l=padding_l,
+                weight_softmax=args.weight_softmax,
+                num_heads=args.encoder_attention_heads,
+                weight_dropout=args.weight_dropout,
+            )
+        else:
+            raise NotImplementedError
+        self.linear2 = Linear(self.conv_dim, self.embed_dim)
+
+        self.dropout_module = FairseqDropout(
+            args.dropout, module_name=self.__class__.__name__
+        )
+        self.relu_dropout_module = FairseqDropout(
+            args.relu_dropout, module_name=self.__class__.__name__
+        )
+        self.input_dropout_module = FairseqDropout(
+            args.input_dropout, module_name=self.__class__.__name__
+        )
+        self.normalize_before = args.encoder_normalize_before
+
+        self.layer_norm = LayerNorm(self.embed_dim)
+
+    def forward(self, x, encoder_padding_mask):
+        """
+        Args:
+            x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
+            encoder_padding_mask (ByteTensor): binary ByteTensor of shape
+                `(batch, src_len)` where padding elements are indicated by ``1``.
+
+        Returns:
+            encoded output of shape `(batch, src_len, embed_dim)`
+        """
+        residual = x
+        x = self.layer_norm(x)
+        x = self.input_dropout_module(x)
+        x = self.linear1(x)
+        if self.act is not None:
+            x = self.act(x)
+        if encoder_padding_mask is not None:
+            x = x.masked_fill(encoder_padding_mask.transpose(0, 1).unsqueeze(2), 0)
+        x = self.conv(x)
+        x = self.linear2(x)
+        x = self.dropout_module(x)
+        x = residual + x
+
+        return x
+
+def Linear(in_features, out_features, bias=True):
+    m = nn.Linear(in_features, out_features, bias)
+    nn.init.xavier_uniform_(m.weight)
+    if bias:
+        nn.init.constant_(m.bias, 0.0)
+    return m        
