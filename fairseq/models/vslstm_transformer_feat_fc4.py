@@ -407,12 +407,12 @@ class SLSTMEncoder(FairseqEncoder):
         #     print('padding_mask', encoder_padding_mask, encoder_padding_mask.size())
         #     exit()
         # encoder_states = [] if return_all_hiddens else None
-        x, c, _, _, all_mem = self.layers(x, encoder_padding_mask, self.num_layers, src_lengths)
+        x, _, _, _, _ = self.layers(x, encoder_padding_mask, self.num_layers, src_lengths)
 
         # T x B x C
         x = x.transpose(0, 1)
-        c = c.transpose(0, 1)
-        all_mem = all_mem.transpose(1, 2)  # [num_layer, T, B, C]
+        # c = c.transpose(0, 1)
+        # all_mem = all_mem.transpose(1, 2)  # [num_layer, T, B, C]
         if self.layer_norm is not None:
             x = self.layer_norm(x)
             # if return_all_hiddens:
@@ -908,6 +908,11 @@ def slstm_tlstm_iwslt(args):
     base_architecture(args)
 
 
+@register_model_architecture("vslstm_tf_fc4_attnfeat", "vslstm_tf_fc4_attnfeat_wmt")
+def slstm_tlstm_wmt(args):
+    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 2048)
+    args.decoder_ffn_embed_dim = getattr(args, "decoder_ffn_embed_dim", 2048)
+    base_architecture(args)
 
 @register_model_architecture("vslstm_tf_fc4_attnfeat", "vslstm_tf_fc4_attnfeat_wmt_en_de_big")
 def transformer_vaswani_wmt_en_de_big(args):
