@@ -81,6 +81,11 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
         )
+        # print("ni")
+        # print(sample['net_input'])
+        # print("t")
+        # print(sample['target'])
+        # xxx
         logging_output = {
             "loss": loss.data,
             "nll_loss": nll_loss.data,

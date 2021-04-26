@@ -53,9 +53,16 @@ class LinearizedConvolution(ConvTBC):
         """
         if incremental_state is None:
             output = self.conv_tbc(input)
+
             if self.kernel_size[0] > 1 and self.padding[0] > 0:
                 # remove future timesteps added by padding
+                # print(output.size())
                 output = output[: -self.padding[0], :, :]
+                # print(self.padding[0])
+                # print(self.kernel_size[0])
+                print("o")
+                print(output.size())
+                # xxx
             return output
 
         # reshape weight

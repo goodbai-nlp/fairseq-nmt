@@ -48,5 +48,5 @@ elif [ "$mode" == "test" ]
 then
 CUDA_VISIBLE_DEVICES=1 PYTHONIOENCODING=utf-8 python -u $RUN_PATH/generate.py data-bin/iwslt14_deen_s8000t6000 \
     --path $MODEL_PATH/checkpoint_best.pt \
-    --batch-size 512 --beam 5 --remove-bpe --fp16 --lenpen 1.0 | tee $MODEL_PATH/test.log.$time
+    --batch-size 1 --beam 1 --remove-bpe --fp16 --lenpen 1.0 | tee $MODEL_PATH/test.log.$time
 fi

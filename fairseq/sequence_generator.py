@@ -317,14 +317,20 @@ class SequenceGenerator(nn.Module):
                 encoder_outs = self.model.reorder_encoder_out(
                     encoder_outs, reorder_state
                 )
-
+            if incremental_states is not None:
+                old = incremental_states[0]
+            
             lprobs, avg_attn_scores = self.model.forward_decoder(
                 tokens[:, : step + 1],
                 encoder_outs,
                 incremental_states,
                 self.temperature,
             )
-
+            # if incremental_states is not None:
+            #     new = incremental_states[0]
+            #     print(old.keys())
+            #     # print(new)
+            #     xxx
             if self.lm_model is not None:
                 lm_out = self.lm_model(tokens[:, : step + 1])
                 probs = self.lm_model.get_normalized_probs(
